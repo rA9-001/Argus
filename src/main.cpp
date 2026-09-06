@@ -108,24 +108,37 @@ void AddTrayIcon() {
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 }
 
-bool StartupEnabled() {
+constexpr const wchar_t* kRunKey =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+// The command the Run entry should hold while startup is enabled.
+std::wstring StartupCommand() { return L"\"" + ExePath() + L"\""; }
+
+// The command it currently holds, or empty when there is no entry.
+std::wstring StartupEntry() {
     HKEY k;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER,
-                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                      0, KEY_READ, &k) != ERROR_SUCCESS) return false;
-    const LONG r = RegQueryValueExW(k, APP_NAME, nullptr, nullptr, nullptr, nullptr);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &k) != ERROR_SUCCESS)
+        return L"";
+    wchar_t buf[MAX_PATH * 2]{};
+    DWORD   cb = sizeof(buf) - sizeof(wchar_t);   // leave room to terminate
+    DWORD   type = 0;
+    const LONG r = RegQueryValueExW(k, APP_NAME, nullptr, &type,
+                                    reinterpret_cast<BYTE*>(buf), &cb);
     RegCloseKey(k);
-    return r == ERROR_SUCCESS;
+    if (r != ERROR_SUCCESS || type != REG_SZ) return L"";
+    return buf;
 }
 
-void SetStartup(bool on) {
+bool StartupEnabled() { return !StartupEntry().empty(); }
+
+// Registry only, so the launch-time reconcile does not rewrite the ini.
+void WriteStartupEntry(bool on) {
     HKEY k;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-                        L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                        0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) != ERROR_SUCCESS)
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0,
+                        KEY_WRITE, nullptr, &k, nullptr) != ERROR_SUCCESS)
         return;
     if (on) {
-        const std::wstring cmd = L"\"" + ExePath() + L"\"";
+        const std::wstring cmd = StartupCommand();
         RegSetValueExW(k, APP_NAME, 0, REG_SZ,
                        reinterpret_cast<const BYTE*>(cmd.c_str()),
                        (DWORD)((cmd.size() + 1) * sizeof(wchar_t)));
@@ -133,8 +146,20 @@ void SetStartup(bool on) {
         RegDeleteValueW(k, APP_NAME);
     }
     RegCloseKey(k);
+}
+
+void SetStartup(bool on) {
+    WriteStartupEntry(on);
     g_cfg.runAtStartup = on;
     SaveSettings();
+}
+
+// Make the Run entry agree with the settings, once per launch.  This is what
+// registers Argus on a first run - runAtStartup defaults to 1 - and what
+// repoints the entry at the new location after the exe has been moved.
+void SyncStartup() {
+    const std::wstring want = g_cfg.runAtStartup ? StartupCommand() : L"";
+    if (StartupEntry() != want) WriteStartupEntry(g_cfg.runAtStartup);
 }
 
 // ---------------------------------------------------------------------------
@@ -612,6 +637,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         return 0;
     }
 
+    SyncStartup();
+
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = TrayProc;
@@ -648,6 +675,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
                   ? L"PrintScreen released. Windows takes it back after you "
                     L"next sign in."
                   : L"PrintScreen now opens Argus.", false);
+    } else if (g_firstRun && g_cfg.runAtStartup) {
+        Toast(APP_NAME,
+              L"Running in the tray, and set to start with Windows.\n"
+              L"Right-click the icon to turn that off.", false);
     }
 
     // Launching with an explicit mode captures immediately.

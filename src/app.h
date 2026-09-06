@@ -79,12 +79,13 @@ struct Settings {
     bool  quickSave      = false;         // Ctrl+S skips the file dialog
     bool  playSound      = false;
     bool  showMagnifier  = true;
-    bool  runAtStartup   = false;
+    bool  runAtStartup   = true;          // on by default; tray menu turns it off
     int   dimAlpha       = 110;           // 0..255
     COLORREF accent      = RGB(76, 141, 255);
 };
 
 extern Settings g_cfg;
+extern bool     g_firstRun;           // set by LoadSettings when it created the ini
 void LoadSettings();
 void SaveSettings();
 std::wstring ConfigPath();

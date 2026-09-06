@@ -1,6 +1,6 @@
 # Argus
 
-A screenshot tool for Windows. One 306 KB executable, no installer, no runtime,
+A screenshot tool for Windows. One 308 KB executable, no installer, no runtime,
 no background CPU. Press a key, drag a box, hit Enter.
 
 *Argus Panoptes, the hundred-eyed watchman of Greek myth, who never closed more
@@ -12,11 +12,23 @@ faster than either Lightshot or Greenshot, and without an account or an uploader
 
 ## Install
 
-Copy `build\argus.exe` wherever you like and run it. It sits in the tray.
-To have it start with Windows: right-click the tray icon → **Run at startup**.
+[**Download `argus.exe`**](https://github.com/rA9-001/Argus/releases/latest) —
+put it wherever you want it to live and run it. It sits in the tray.
 
 There is nothing else to install. It links only against DLLs that ship with
 Windows — no Visual C++ redistributable, no .NET.
+
+**It starts with Windows from the first run.** Argus adds itself to
+`HKCU\...\CurrentVersion\Run` pointing at wherever you put the exe, and keeps
+that entry in step on every launch — so moving the exe and running it once is
+enough to fix the shortcut. Turn it off from the tray icon → **Run at startup**,
+or set `runAtStartup=0` in the settings file. Nothing is written outside your
+own user account, and no service or scheduled task is created.
+
+> Windows SmartScreen will warn about the download, because the binary is not
+> code-signed — a certificate costs more per year than this project is worth.
+> *More info → Run anyway*, or build it yourself in ten seconds; see
+> [Building](#building).
 
 > On Windows 11 new tray icons are hidden in the overflow chevron by default.
 > Drag it onto the taskbar to keep it visible.
@@ -100,7 +112,8 @@ correctly into browsers, chat apps and Office alike. Saves go to
 **Edit settings…** opens it. Restart Argus after editing.
 
 It covers the four hotkeys, the save folder, whether `Ctrl+S` skips the file
-dialog, the magnifier, the dim strength, and the accent colour.
+dialog, the magnifier, the dim strength, the accent colour, and whether Argus
+starts with Windows.
 
 ## Command line
 

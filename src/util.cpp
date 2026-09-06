@@ -117,21 +117,27 @@ static const char kDefaultIni[] =
     "accentB=255\r\n"
     "\r\n"
     "[app]\r\n"
-    "runAtStartup=0\r\n";
+    "; Start with Windows.  Kept in sync with the HKCU Run entry on every\r\n"
+    "; launch, so moving argus.exe is enough to fix the shortcut.\r\n"
+    "runAtStartup=1\r\n";
 
-static void WriteDefaultConfig(const std::wstring& path) {
+bool g_firstRun = false;
+
+// True when it created the file, i.e. this is the very first run.
+static bool WriteDefaultConfig(const std::wstring& path) {
     HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                            CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;       // already there, or unwritable
+    if (f == INVALID_HANDLE_VALUE) return false; // already there, or unwritable
     DWORD written = 0;
     WriteFile(f, kDefaultIni, (DWORD)(sizeof(kDefaultIni) - 1), &written, nullptr);
     CloseHandle(f);
+    return true;
 }
 
 void LoadSettings() {
     const std::wstring f = ConfigPath();
     if (f.empty()) return;
-    WriteDefaultConfig(f);
+    g_firstRun = WriteDefaultConfig(f);
 
     g_cfg.hotkeyRegion = IniGet(L"hotkeys", L"region",  g_cfg.hotkeyRegion, f);
     g_cfg.hotkeyFull   = IniGet(L"hotkeys", L"full",    g_cfg.hotkeyFull,   f);
@@ -151,7 +157,7 @@ void LoadSettings() {
     const int b = Clampi(IniGetInt(L"ui", L"accentB", 255, f), 0, 255);
     g_cfg.accent = RGB(r, g, b);
 
-    g_cfg.runAtStartup = IniGetInt(L"app", L"runAtStartup", 0, f) != 0;
+    g_cfg.runAtStartup = IniGetInt(L"app", L"runAtStartup", 1, f) != 0;
 }
 
 void SaveSettings() {
