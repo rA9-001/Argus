@@ -16,6 +16,7 @@ namespace {
 RECT s_lastSel{};
 bool s_haveLastSel      = false;
 bool s_suppressDeactivate = false;   // set while a modal dialog is up
+bool s_starting           = false;   // set while OverlayShow is bringing it up
 
 // Timer ids on the overlay window.
 constexpr UINT_PTR kTimerCaret    = 1;
@@ -830,8 +831,16 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_ACTIVATEAPP:
         if (!wp && !s_suppressDeactivate) {
-            if (g_trace) TraceLine(L"close overlay lost activation to another window");
-            CloseOverlay();
+            if (s_starting) {
+                // Activation can bounce while the window is still coming up.
+                // That is not the user dismissing the capture, and acting on
+                // it would destroy the window from inside OverlayShow, which
+                // then carries on using state the teardown has already freed.
+                if (g_trace) TraceLine(L"close  IGNORED - activation bounced during startup");
+            } else {
+                if (g_trace) TraceLine(L"close  overlay lost activation to another window");
+                CloseOverlay();
+            }
         }
         return 0;
 
@@ -953,6 +962,7 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
         break;
     }
 
+    s_starting = true;
     ov.hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOPARENTNOTIFY,
         WNDCLS_OVERLAY, APP_NAME, WS_POPUP,
@@ -961,6 +971,7 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
 
     if (!ov.hwnd) {
         if (g_trace) TraceLine(L"show  ABORTED - could not create the overlay window");
+        s_starting = false;
         ov.reset();
         return;
     }
@@ -982,6 +993,7 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
 
     UpdateWindow(ov.hwnd);              // forces the first WM_PAINT to complete
     const long long tPainted = TraceNow();
+    s_starting = false;
 
     if (g_trace) {
         wchar_t buf[320];

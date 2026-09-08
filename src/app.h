@@ -11,7 +11,7 @@
 #include <cstdint>
 
 #define APP_NAME       L"Argus"
-#define APP_VERSION    L"1.0.1"
+#define APP_VERSION    L"1.0.2"
 #define WNDCLS_OVERLAY L"ArgusOverlay"
 #define WNDCLS_TRAY    L"ArgusTray"
 #define MUTEX_NAME     L"Local\\Argus.SingleInstance.v1"

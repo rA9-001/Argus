@@ -275,6 +275,16 @@ bool ParseHotkey(const std::wstring& spec, UINT& mods, UINT& vk) {
 bool ForceForeground(HWND hwnd) {
     if (!hwnd) return false;
 
+    // Showing the window has usually activated us already: pressing a hotkey
+    // grants its owner the right to come forward.  When that has happened,
+    // touch nothing.  The AttachThreadInput dance below is what rescues the
+    // cases where it has not, but it is not free - detaching hands activation
+    // back, and with some apps (the Windows 11 Notepad among them) it bounces
+    // to the other window and stays there.  To the overlay that bounce is
+    // indistinguishable from the user clicking away, so it closed itself
+    // before it had finished opening.
+    if (GetForegroundWindow() == hwnd) return true;
+
     HWND  fg      = GetForegroundWindow();
     DWORD fgTid   = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
     DWORD selfTid = GetCurrentThreadId();
