@@ -17,6 +17,11 @@ RECT s_lastSel{};
 bool s_haveLastSel      = false;
 bool s_suppressDeactivate = false;   // set while a modal dialog is up
 
+// Timer ids on the overlay window.
+constexpr UINT_PTR kTimerCaret    = 1;
+constexpr UINT_PTR kTimerOrphan   = 2;   // see OverlayShow
+constexpr UINT     kOrphanCheckMs = 1200;
+
 int Sc(int v) { return max(1, (int)(v * g_ov.scale + 0.5f)); }
 
 // GetDpiForMonitor lives in Shcore.dll; bind it lazily so the import table
@@ -156,7 +161,7 @@ void EndTextEdit(bool keep) {
     Overlay& ov = g_ov;
     if (!ov.editing) return;
     ov.editing = false;
-    KillTimer(ov.hwnd, 1);
+    KillTimer(ov.hwnd, kTimerCaret);
 
     if (ov.editIndex < ov.shapes.size()) {
         if (!keep || ov.shapes[ov.editIndex].text.empty())
@@ -386,7 +391,7 @@ void PlaceText(POINT p) {
     ov.editing   = true;
     ov.editIndex = ov.shapes.size() - 1;
     ov.caretOn   = true;
-    SetTimer(ov.hwnd, 1, 530, nullptr);
+    SetTimer(ov.hwnd, kTimerCaret, 530, nullptr);
     InvalidateRect(ov.hwnd, nullptr, FALSE);
 }
 
@@ -809,10 +814,17 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER:
-        if (wp == 1 && ov.editing) {
+        if (wp == kTimerCaret && ov.editing) {
             ov.caretOn = !ov.caretOn;
             if (ov.editIndex < ov.shapes.size())
                 OverlayDamage(ShapeBounds(ov.shapes[ov.editIndex]));
+        } else if (wp == kTimerOrphan) {
+            KillTimer(hwnd, kTimerOrphan);
+            // We never won the foreground, so WM_ACTIVATEAPP will never fire
+            // to close us.  Give the window one last chance, then get out of
+            // the way rather than sit on the screen holding the capture.
+            if (GetForegroundWindow() != hwnd && !ForceForeground(hwnd))
+                CloseOverlay();
         }
         return 0;
 
@@ -825,7 +837,8 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_DESTROY:
-        KillTimer(hwnd, 1);
+        KillTimer(hwnd, kTimerCaret);
+        KillTimer(hwnd, kTimerOrphan);
         ov.hwnd = nullptr;
         ov.reset();
         return 0;
@@ -839,6 +852,16 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 } // namespace
 
 bool OverlayIsActive() { return g_ov.hwnd != nullptr; }
+
+// An overlay that exists but is not the foreground window, and is not being
+// held open by one of our own dialogs, is no longer reachable by the keyboard.
+// Whatever is in front of it owns the input, so the user cannot dismiss it.
+bool OverlayIsStale() {
+    return g_ov.hwnd && !s_suppressDeactivate &&
+           GetForegroundWindow() != g_ov.hwnd;
+}
+
+void OverlayAbandon() { CloseOverlay(); }
 
 bool OverlayRegisterClass(HINSTANCE hInst) {
     PaintInit();
@@ -937,7 +960,12 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
     ShowWindow(ov.hwnd, SW_SHOW);
     const long long tShow = TraceNow();
 
-    ForceForeground(ov.hwnd);
+    // If we lose the foreground race - an elevated window, or a game holding
+    // the display exclusively - no WM_ACTIVATEAPP will ever arrive to close
+    // us, and a silently orphaned overlay would swallow every later hotkey.
+    // Arm a watchdog so the window cannot outlive its usefulness.
+    const bool gotForeground = ForceForeground(ov.hwnd);
+    if (!gotForeground) SetTimer(ov.hwnd, kTimerOrphan, kOrphanCheckMs, nullptr);
     const long long tForeground = TraceNow();
 
     UpdateWindow(ov.hwnd);              // forces the first WM_PAINT to complete
@@ -947,7 +975,8 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
         wchar_t buf[320];
         wsprintfW(buf,
             L"capture %d.%02d  targets %d.%02d  createwnd %d.%02d  show %d.%02d  "
-            L"foreground %d.%02d  firstpaint %d.%02d  TOTAL %d.%02d ms  (%dx%d)",
+            L"foreground %d.%02d  firstpaint %d.%02d  TOTAL %d.%02d ms  (%dx%d)"
+            L"%s",
             (int)TraceMs(tStart, tCapture),         (int)(TraceMs(tStart, tCapture) * 100) % 100,
             (int)TraceMs(tCapture, tTargets),       (int)(TraceMs(tCapture, tTargets) * 100) % 100,
             (int)TraceMs(tTargets, tWindow),        (int)(TraceMs(tTargets, tWindow) * 100) % 100,
@@ -955,7 +984,8 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
             (int)TraceMs(tShow, tForeground),       (int)(TraceMs(tShow, tForeground) * 100) % 100,
             (int)TraceMs(tForeground, tPainted),    (int)(TraceMs(tForeground, tPainted) * 100) % 100,
             (int)TraceMs(tStart, tPainted),         (int)(TraceMs(tStart, tPainted) * 100) % 100,
-            ov.cap.w, ov.cap.h);
+            ov.cap.w, ov.cap.h,
+            gotForeground ? L"" : L"  *** NO FOREGROUND ***");
         TraceLine(buf);
     }
 }

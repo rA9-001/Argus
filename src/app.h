@@ -11,7 +11,7 @@
 #include <cstdint>
 
 #define APP_NAME       L"Argus"
-#define APP_VERSION    L"1.0"
+#define APP_VERSION    L"1.0.1"
 #define WNDCLS_OVERLAY L"ArgusOverlay"
 #define WNDCLS_TRAY    L"ArgusTray"
 #define MUTEX_NAME     L"Local\\Argus.SingleInstance.v1"
@@ -110,12 +110,14 @@ enum class Grab { Region, FullScreen, ActiveWindow, Repeat };
 bool  OverlayRegisterClass(HINSTANCE hInst);
 void  OverlayShow(HINSTANCE hInst, Grab mode);
 bool  OverlayIsActive();
+bool  OverlayIsStale();       // exists, but orphaned behind another window
+void  OverlayAbandon();       // tear down a stale overlay
 void  OverlayShutdown();
 
 // ---------------------------------------------------------------------------
 //  Small helpers
 // ---------------------------------------------------------------------------
-void        ForceForeground(HWND hwnd);
+bool        ForceForeground(HWND hwnd);
 std::wstring ExePath();
 std::wstring Timestamp();
 void        EnsureDir(const std::wstring& dir);

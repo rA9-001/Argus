@@ -346,6 +346,13 @@ LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_DO_CAPTURE:
+        // Pressing the hotkey while a capture is genuinely on screen is a
+        // no-op, on purpose.  But an overlay stranded behind another window
+        // used to swallow every press from then on, until something else
+        // took the foreground and released it - which is why the key would
+        // "stop working" inside an app and come back after a taskbar click.
+        // Recycle that one instead of dropping the key.
+        if (OverlayIsStale()) OverlayAbandon();
         if (!OverlayIsActive()) OverlayShow(g_inst, (Grab)wp);
         return 0;
 

@@ -268,22 +268,35 @@ bool ParseHotkey(const std::wstring& spec, UINT& mods, UINT& vk) {
 //  granted foreground rights; attaching to the current foreground thread makes
 //  this reliable across the remaining edge cases.
 // ---------------------------------------------------------------------------
-void ForceForeground(HWND hwnd) {
-    if (!hwnd) return;
+// Returns whether the window actually ended up in the foreground.  The caller
+// has to know: AttachThreadInput fails against a higher-integrity foreground
+// window, and SetForegroundWindow fails outright against an exclusive
+// full-screen one, so the polite sequence below is not guaranteed to work.
+bool ForceForeground(HWND hwnd) {
+    if (!hwnd) return false;
 
     HWND  fg      = GetForegroundWindow();
     DWORD fgTid   = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
     DWORD selfTid = GetCurrentThreadId();
 
-    if (fgTid && fgTid != selfTid) AttachThreadInput(selfTid, fgTid, TRUE);
+    const bool attached = fgTid && fgTid != selfTid &&
+                          AttachThreadInput(selfTid, fgTid, TRUE) != 0;
 
-    ShowWindow(hwnd, SW_SHOW);
-    BringWindowToTop(hwnd);
-    SetForegroundWindow(hwnd);
-    SetActiveWindow(hwnd);
-    SetFocus(hwnd);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        ShowWindow(hwnd, SW_SHOW);
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
+        if (GetForegroundWindow() == hwnd) break;
 
-    if (fgTid && fgTid != selfTid) AttachThreadInput(selfTid, fgTid, FALSE);
+        // The route the taskbar itself uses.  Undocumented, but it is the one
+        // path that still works when the foreground lock has bitten us.
+        SwitchToThisWindow(hwnd, TRUE);
+    }
+
+    if (attached) AttachThreadInput(selfTid, fgTid, FALSE);
+    return GetForegroundWindow() == hwnd;
 }
 
 // ---------------------------------------------------------------------------
