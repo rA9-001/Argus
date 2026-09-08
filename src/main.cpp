@@ -304,10 +304,62 @@ void OnCommand(UINT id) {
     }
 }
 
+// --------------------------------------------------------------------------
+//  --trace diagnostics for "I pressed the key and nothing happened".
+//
+//  Three separate things can swallow a capture, and they need telling apart:
+//  keyboard software or a filter driver eating the key before Windows sees it;
+//  Windows seeing it but declining to deliver the hotkey (it will not hand one
+//  to a normal process while an elevated window has focus); or Argus receiving
+//  it and mishandling it.  The low-level hook below observes the raw key, so
+//  the log distinguishes all three.  It is installed only under --trace.
+// --------------------------------------------------------------------------
+std::wstring ForegroundDesc() {
+    HWND fg = GetForegroundWindow();
+    wchar_t cls[64] = L"-";
+    if (fg) GetClassNameW(fg, cls, (int)std::size(cls));
+
+    DWORD pid = 0;
+    if (fg) GetWindowThreadProcessId(fg, &pid);
+
+    wchar_t exe[MAX_PATH] = L"?";
+    if (pid) {
+        if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+            DWORD n = (DWORD)std::size(exe);
+            if (!QueryFullProcessImageNameW(h, 0, exe, &n)) lstrcpyW(exe, L"?");
+            CloseHandle(h);
+        } else {
+            lstrcpyW(exe, L"? (access denied - elevated)");
+        }
+    }
+    const wchar_t* base = wcsrchr(exe, L'\\');
+
+    wchar_t buf[240];
+    wsprintfW(buf, L"foreground=%s [%s]", base ? base + 1 : exe, cls);
+    return buf;
+}
+
+HHOOK g_diagHook = nullptr;
+
+LRESULT CALLBACK DiagKeyProc(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN)) {
+        const KBDLLHOOKSTRUCT* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lp);
+        if (k->vkCode == VK_SNAPSHOT) {
+            wchar_t buf[320];
+            wsprintfW(buf, L"key   VK_SNAPSHOT reached Windows%s   %s",
+                      (k->flags & LLKHF_INJECTED) ? L" (synthetic)" : L"",
+                      ForegroundDesc().c_str());
+            TraceLine(buf);
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
 LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == g_taskbarCreated && g_taskbarCreated) { AddTrayIcon(); return 0; }
 
     if (msg == g_msgRequest && g_msgRequest) {          // from a second instance
+        if (g_trace) TraceLine(L"req   broadcast from a second instance");
         if (wp == REQ_QUIT) DestroyWindow(hwnd);
         else                PostMessageW(hwnd, WM_DO_CAPTURE, wp, 0);
         return 0;
@@ -332,6 +384,12 @@ LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
     case WM_HOTKEY: {
+        if (g_trace) {
+            wchar_t buf[320];
+            wsprintfW(buf, L"hkey  WM_HOTKEY id=%d delivered   %s",
+                      (int)wp, ForegroundDesc().c_str());
+            TraceLine(buf);
+        }
         Grab mode = Grab::Region;
         switch (wp) {
         case HK_FULL:   mode = Grab::FullScreen;   break;
@@ -352,8 +410,16 @@ LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // took the foreground and released it - which is why the key would
         // "stop working" inside an app and come back after a taskbar click.
         // Recycle that one instead of dropping the key.
+        if (g_trace) {
+            wchar_t buf[320];
+            wsprintfW(buf, L"capt  request: overlay active=%d stale=%d   %s",
+                      OverlayIsActive() ? 1 : 0, OverlayIsStale() ? 1 : 0,
+                      ForegroundDesc().c_str());
+            TraceLine(buf);
+        }
         if (OverlayIsStale()) OverlayAbandon();
         if (!OverlayIsActive()) OverlayShow(g_inst, (Grab)wp);
+        else if (g_trace)      TraceLine(L"capt  IGNORED - a capture is already on screen");
         return 0;
 
     case WM_COMMAND:
@@ -646,6 +712,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     SyncStartup();
 
+    if (g_trace) {
+        g_diagHook = SetWindowsHookExW(WH_KEYBOARD_LL, DiagKeyProc, hInst, 0);
+        TraceLine(g_diagHook
+                  ? L"---- Argus " APP_VERSION L" started, key diagnostics on ----"
+                  : L"---- Argus " APP_VERSION L" started, KEY HOOK FAILED ----");
+    }
+
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = TrayProc;
@@ -699,6 +772,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         DispatchMessageW(&msg);
     }
 
+    if (g_diagHook) UnhookWindowsHookEx(g_diagHook);
     CoUninitialize();
     if (mutex) { ReleaseMutex(mutex); CloseHandle(mutex); }
     return (int)msg.wParam;

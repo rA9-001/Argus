@@ -829,7 +829,10 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_ACTIVATEAPP:
-        if (!wp && !s_suppressDeactivate) CloseOverlay();
+        if (!wp && !s_suppressDeactivate) {
+            if (g_trace) TraceLine(L"close overlay lost activation to another window");
+            CloseOverlay();
+        }
         return 0;
 
     case WM_CAPTURECHANGED:
@@ -885,7 +888,11 @@ void OverlayShutdown() {
 
 void OverlayShow(HINSTANCE hInst, Grab mode) {
     Overlay& ov = g_ov;
-    if (ov.hwnd) { ForceForeground(ov.hwnd); return; }
+    if (ov.hwnd) {
+        if (g_trace) TraceLine(L"show  already open - just raising it");
+        ForceForeground(ov.hwnd);
+        return;
+    }
 
     HWND target = (mode == Grab::ActiveWindow) ? GetForegroundWindow() : nullptr;
 
@@ -904,6 +911,7 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
     const long long tStart = TraceNow();
 
     if (!CaptureScreen(ov.cap)) {
+        if (g_trace) TraceLine(L"show  ABORTED - screen capture failed");
         Toast(APP_NAME, L"Screen capture failed.", true);
         return;
     }
@@ -951,7 +959,11 @@ void OverlayShow(HINSTANCE hInst, Grab mode) {
         ov.cap.ox, ov.cap.oy, ov.cap.w, ov.cap.h,
         nullptr, nullptr, hInst, nullptr);
 
-    if (!ov.hwnd) { ov.reset(); return; }
+    if (!ov.hwnd) {
+        if (g_trace) TraceLine(L"show  ABORTED - could not create the overlay window");
+        ov.reset();
+        return;
+    }
     const long long tWindow = TraceNow();
 
     LayoutToolbar();
